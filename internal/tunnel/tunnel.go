@@ -25,7 +25,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/google/ax/pkg/apis/v1alpha1"
@@ -116,8 +115,7 @@ func StopTunnel(info *TunnelInfo) error {
 	}
 	if info.PID > 0 {
 		// Attempt to terminate process group and single process
-		_ = syscall.Kill(-info.PID, syscall.SIGTERM)
-		_ = syscall.Kill(info.PID, syscall.SIGTERM)
+		terminateGroup(info.PID)
 	}
 
 	dir, err := TunnelDir()
@@ -244,7 +242,7 @@ func EnsureServerURL(opts Options) (string, error) {
 	kArgs = append(kArgs, "port-forward", "-n", opts.Namespace, targetRes, fmt.Sprintf(":%d", opts.Port))
 
 	cmd := exec.Command("kubectl", kArgs...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	setProcessGroup(cmd)
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 
@@ -271,7 +269,7 @@ func EnsureServerURL(opts Options) (string, error) {
 		}
 
 		// Check if command exited prematurely
-		if err := syscall.Kill(cmd.Process.Pid, 0); err != nil {
+		if err := processAlive(cmd.Process.Pid); err != nil {
 			return "", fmt.Errorf("kubectl port-forward exited for context %q: %s", ctxName, strings.TrimSpace(string(logData)))
 		}
 	}
@@ -329,7 +327,7 @@ func PortForward(ctx context.Context, kubeContext, namespace, targetResource str
 	kArgs = append(kArgs, "port-forward", targetResource, fmt.Sprintf(":%d", remotePort))
 
 	cmd := exec.CommandContext(ctx, "kubectl", kArgs...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	setProcessGroup(cmd)
 
 	pr, pw, err := os.Pipe()
 	if err != nil {
@@ -376,7 +374,7 @@ func PortForward(ctx context.Context, kubeContext, namespace, targetResource str
 	cleanup := func() {
 		_ = pr.Close()
 		if cmd.Process != nil {
-			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+			terminateGroup(cmd.Process.Pid)
 			_ = cmd.Process.Kill()
 		}
 	}
